@@ -1,5 +1,8 @@
-import React, { useRef, useEffect } from "react";
+import React, { useRef, useState } from "react";
 import io from "socket.io-client";
+
+var mediaRecorder;
+var recordedBlobs;
 
 const Room = (props) => {
   const userVideo = useRef();
@@ -8,8 +11,11 @@ const Room = (props) => {
   const socketRef = useRef();
   const otherUser = useRef();
   const userStream = useRef();
+  const [myStream, getMyStream] = useState();
+  const [videoUrl, setVideoUrl] = useState();
+  const [status, setStatus] = useState();
 
-  useEffect(() => {
+  const startStream = () => {
     navigator.mediaDevices
       .getUserMedia({ audio: true, video: true })
       .then((stream) => {
@@ -29,12 +35,86 @@ const Room = (props) => {
         });
 
         socketRef.current.on("offer", handleRecieveCall);
-
         socketRef.current.on("answer", handleAnswer);
-
         socketRef.current.on("ice-candidate", handleNewICECandidateMsg);
+
+        getMyStream(stream);
+        startRecordStreem(stream);
+        setStatus("Stream and record started");
       });
-  }, []);
+  };
+
+  const startRecordStreem = (stream) => {
+    recordedBlobs = [];
+    let options = { mimeType: "video/webm;codecs=vp9,opus" };
+    if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+      console.error(`${options.mimeType} is not supported`);
+      options = { mimeType: "video/webm;codecs=vp8,opus" };
+      if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+        console.error(`${options.mimeType} is not supported`);
+        options = { mimeType: "video/webm" };
+        if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+          console.error(`${options.mimeType} is not supported`);
+          options = { mimeType: "" };
+        }
+      }
+    }
+    try {
+      mediaRecorder = new MediaRecorder(stream, options);
+    } catch (e) {
+      console.error("Exception while creating MediaRecorder:", e);
+      return;
+    }
+    console.log(
+      "Created MediaRecorder",
+      mediaRecorder,
+      "with options",
+      options
+    );
+    mediaRecorder.onstop = (event) => {
+      console.log("Recorder stopped: ", event);
+      console.log("Recorded Blobs: ", recordedBlobs);
+    };
+    mediaRecorder.ondataavailable = handleDataAvailable;
+    mediaRecorder.start();
+    console.log("MediaRecorder started", mediaRecorder);
+  };
+
+  const finishStream = () => {
+    const tracks = myStream.getTracks();
+    console.log(tracks);
+    tracks.forEach(function (track) {
+      track.stop();
+    });
+    mediaRecorder.stop();
+    setStatus("Stream and record finished. You can download a video");
+  };
+
+  const downloadStream = () => {
+    const blob = new Blob(recordedBlobs, { type: "video/webm" });
+    const url = window.URL.createObjectURL(blob);
+    setVideoUrl(url);
+    const a = document.createElement("a");
+    a.style.display = "none";
+    a.href = url;
+    a.download = "test.webm";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      window.URL.revokeObjectURL(url);
+    }, 100);
+    console.log("blob", blob);
+    console.log("url", url);
+    console.log("a", a);
+  };
+
+  const handleDataAvailable = (event) => {
+    console.log("handleDataAvailable", event);
+    if (event.data && event.data.size > 0) {
+      recordedBlobs.push(event.data);
+    }
+  };
 
   const callUser = (userID) => {
     peerRef.current = createPeer(userID);
@@ -138,6 +218,11 @@ const Room = (props) => {
     <div>
       <video autoPlay ref={userVideo} />
       <video autoPlay ref={partnerVideo} />
+      <button onClick={startStream}>Start stream</button>
+      <button onClick={finishStream}>Finish stream</button>
+      <button onClick={downloadStream}>Download stream</button>
+      Status:{status}
+      {videoUrl}
     </div>
   );
 };
